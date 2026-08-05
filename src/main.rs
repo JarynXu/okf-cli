@@ -13,8 +13,8 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum, error::ErrorKind};
 use okf::{
-    Bundle, BundleParser, Document, DocumentId, KnowledgeGraph, SearchQuery, Severity,
-    ValidationOptions, Validator,
+    Bundle, BundleParser, Document, KnowledgeGraph, SearchQuery, Severity, ValidationOptions,
+    Validator,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -36,7 +36,11 @@ enum GraphRepresentation {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "okf", version, about = "Inspect and query Open Knowledge Format bundles")]
+#[command(
+    name = "okf",
+    version,
+    about = "Inspect and query Open Knowledge Format bundles"
+)]
 struct Cli {
     /// Bundle directory used by the command.
     #[arg(long, global = true, default_value = ".")]
@@ -87,7 +91,7 @@ enum Command {
         #[arg(long)]
         tag: Vec<String>,
         /// Maximum number of returned hits.
-        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(usize).range(1..=1000))]
+        #[arg(long, default_value_t = 20, value_parser = parse_limit)]
         limit: usize,
     },
     /// Build the resolved directed knowledge graph.
@@ -208,7 +212,12 @@ fn main() -> ExitCode {
     let json_requested = requests_json(&args);
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
-        Err(error) if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
             if error.print().is_err() {
                 return ExitCode::from(3);
             }
@@ -285,7 +294,7 @@ fn init_bundle(root: &Path, force: bool) -> Result<Outcome> {
         bail!("{} already exists; pass --force to replace it", index.display());
     }
 
-    fs::write(
+    fs ::write(
         &index,
         "---\ntitle: Knowledge bundle\nsummary: Entry point for this bundle.\ntags: [index]\n---\n# Knowledge bundle\n\nDescribe the bundle here.\n",
     )
@@ -427,6 +436,7 @@ fn search_documents(path: &Path, text: &str, tags: &[String], limit: usize) -> R
     for tag in tags {
         query = query.with_tag(tag);
     }
+
     let hits = bundle
         .search(&query)
         .into_iter()
@@ -476,30 +486,32 @@ fn graph_bundle(
             });
         }
     }
+
     let dot = graph_to_dot(&bundle, &edges);
-    let focus = id_or_alias
-        .map(|value| {
-            let document = bundle
-                .resolve(value)
-                .ok_or_else(|| anyhow!("document '{value}' was not found"))?;
-            Ok(GraphFocus {
-                id: document.id().to_string(),
-                incoming: graph
-                    .incoming(document.id())
-                    .map(ToString::to_string)
-                    .collect(),
-                outgoing: graph
-                    .outgoing(document.id())
-                    .map(ToString::to_string)
-                    .collect(),
-                reachable: graph
-                    .reachable_from(document.id())
-                    .into_iter()
-                    .map(|id| id.to_string())
-                    .collect(),
-            })
+    let focus = if let Some(value) = id_or_alias {
+        let document = bundle
+            .resolve(value)
+            .ok_or_else(|| anyhow!("document '{value}' was not found"))?;
+        Some(GraphFocus {
+            id: document.id().to_string(),
+            incoming: graph
+                .incoming(document.id())
+                .map(ToString::to_string)
+                .collect(),
+            outgoing: graph
+                .outgoing(document.id())
+                .map(ToString::to_string)
+                .collect(),
+            reachable: graph
+                .reachable_from(document.id())
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
         })
-        .transpose()?;
+    } else {
+        None
+    };
+
     let view = GraphView {
         nodes,
         edges,
@@ -526,7 +538,7 @@ fn graph_bundle(
             )];
             lines.extend(view.edges.iter().map(|edge| {
                 format!(
-                    "{} -> {} [{}]",
+                    "{} -> {} [{]",
                     edge.from,
                     edge.to,
                     edge.relations.join(",")
@@ -644,6 +656,17 @@ fn write_json_error(command: &str, kind: &str, message: &str) -> Result<()> {
     Ok(())
 }
 
+fn parse_limit(value: &str) -> std::result::Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid limit: {error}"))?;
+    if (1..=1000).contains(&limit) {
+        Ok(limit)
+    } else {
+        Err("limit must be between 1 and 1000".to_owned())
+    }
+}
+
 fn requests_json(args: &[OsString]) -> bool {
     args.iter()
         .any(|argument| argument.to_str() == Some("--output=json"))
@@ -680,6 +703,6 @@ mod tests {
 
     #[test]
     fn validates_document_ids_used_by_cli() {
-        assert!(DocumentId::new("architecture/runtime").is_ok());
+        assert!(okf::DocumentId::new("architecture/runtime").is_ok());
     }
 }

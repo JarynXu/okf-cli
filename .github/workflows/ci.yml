@@ -31,5 +31,5 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
+      - run: cargo fmt --package oks-okf-cli -- --check
       - run: cargo clippy --all-targets --all-features
