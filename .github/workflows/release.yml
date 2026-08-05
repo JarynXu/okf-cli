@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --package oks-okf-cli -- --check
+      - run: cargo clippy --all-targets --all-features
+      - run: cargo test --all-features
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build native binary
+        run: cargo build --profile dist --target ${{ matrix.target }}
+      - name: Package native binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tarfile
+          import zipfile
+
+          target = os.environ["TARGET"]
+          metadata = json.loads(subprocess.check_output([
+              "cargo", "metadata", "--no-deps", "--format-version", "1"
+          ]))
+          version = metadata["packages"][0]["version"]
+          executable = "okf.exe" if "windows" in target else "okf"
+          source = pathlib.Path("target") / target / "dist" / executable
+          output = pathlib.Path("dist")
+          output.mkdir(exist_ok=True)
+          stem = f"okf-v{version}-{target}"
+
+          if "windows" in target:
+              archive = output / f"{stem}.zip"
+              with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+                  bundle.write(source, executable)
+                  bundle.write("LICENSE", "LICENSE")
+                  bundle.write("README.md", "README.md")
+          else:
+              archive = output / f"{stem}.tar.gz"
+              with tarfile.open(archive, "w:gz") as bundle:
+                  bundle.add(source, arcname=executable)
+                  bundle.add("LICENSE", arcname="LICENSE")
+                  bundle.add("README.md", arcname="README.md")
+
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          checksum = archive.with_name(archive.name + ".sha256")
+          checksum.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: okf-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          TAG="v${VERSION}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "OKF CLI $TAG" \
+            --generate-notes \
+            --prerelease
