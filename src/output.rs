@@ -30,11 +30,7 @@ impl Outcome {
     }
 }
 
-pub(crate) fn write_outcome(
-    format: OutputFormat,
-    command: &str,
-    outcome: &Outcome,
-) -> Result<()> {
+pub(crate) fn write_outcome(format: OutputFormat, command: &str, outcome: &Outcome) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match format {
         OutputFormat::Human => writeln!(stdout, "{}", outcome.human.trim_end())?,

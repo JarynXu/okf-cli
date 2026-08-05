@@ -27,9 +27,7 @@ pub(crate) fn execute(bundle_path: &Path, command: &Command) -> Result<Outcome> 
         Command::List { tag } => list_documents(bundle_path, tag),
         Command::Get { id } => get_document(bundle_path, id),
         Command::Inspect { id } => inspect_document(bundle_path, id),
-        Command::Search { query, tag, limit } => {
-            search_documents(bundle_path, query, tag, *limit)
-        }
+        Command::Search { query, tag, limit } => search_documents(bundle_path, query, tag, *limit),
         Command::Graph { id, representation } => {
             graph_bundle(bundle_path, id.as_deref(), *representation)
         }
