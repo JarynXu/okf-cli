@@ -1,0 +1,41 @@
+[package]
+name = "oks-okf-cli"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+description = "Agent-friendly command-line interface for Open Knowledge Format bundles"
+license = "Apache-2.0"
+repository = "https://github.com/open-knowledge-stack/okf-cli"
+readme = "README.md"
+keywords = ["knowledge", "markdown", "retrieval", "graph", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "okf"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+okf = { path = "vendor/okf" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.20"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
