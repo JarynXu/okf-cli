@@ -5,7 +5,6 @@
 mod app;
 mod cli;
 mod commands;
-#[path = "libraries_v2.rs"]
 mod libraries;
 mod library_dispatch;
 mod output;
