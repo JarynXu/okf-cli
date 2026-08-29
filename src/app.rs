@@ -33,7 +33,7 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     };
 
     let command_name = cli.command.name();
-    match execute(&cli.bundle, &cli.command) {
+    match execute(&cli.bundle, &cli.registry, &cli.command) {
         Ok(outcome) => match write_outcome(cli.output, command_name, &outcome) {
             Ok(()) => ExitCode::from(outcome.exit_code),
             Err(error) => {
