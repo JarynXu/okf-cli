@@ -279,11 +279,46 @@ fn git_library_materializes_and_uses_the_same_get_command() {
         "schema_version: \"1\"\nid: git-knowledge\nname: Git Knowledge\ncatalog:\n  - id: root\n    title: Root\n    path: index\n",
     )
     .unwrap();
-    assert!(ProcessCommand::new("git").current_dir(&source).args(["init"]).status().unwrap().success());
-    assert!(ProcessCommand::new("git").current_dir(&source).args(["config", "user.email", "test@example.com"]).status().unwrap().success());
-    assert!(ProcessCommand::new("git").current_dir(&source).args(["config", "user.name", "OKF Test"]).status().unwrap().success());
-    assert!(ProcessCommand::new("git").current_dir(&source).args(["add", "."]).status().unwrap().success());
-    assert!(ProcessCommand::new("git").current_dir(&source).args(["commit", "-m", "initial"]).status().unwrap().success());
+    assert!(
+        ProcessCommand::new("git")
+            .current_dir(&source)
+            .args(["init"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        ProcessCommand::new("git")
+            .current_dir(&source)
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        ProcessCommand::new("git")
+            .current_dir(&source)
+            .args(["config", "user.name", "OKF Test"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        ProcessCommand::new("git")
+            .current_dir(&source)
+            .args(["add", "."])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        ProcessCommand::new("git")
+            .current_dir(&source)
+            .args(["commit", "-m", "initial"])
+            .status()
+            .unwrap()
+            .success()
+    );
 
     okf()
         .arg("--registry")
