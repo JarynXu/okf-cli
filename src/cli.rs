@@ -20,12 +20,16 @@ pub(crate) enum GraphRepresentation {
 #[command(
     name = "okf",
     version,
-    about = "Inspect and query Open Knowledge Format bundles"
+    about = "Inspect, query, and compose Open Knowledge Format knowledge"
 )]
 pub(crate) struct Cli {
-    /// Bundle directory used by the command.
+    /// Bundle directory used by core bundle commands.
     #[arg(long, global = true, default_value = ".")]
     pub(crate) bundle: PathBuf,
+
+    /// Persistent Library registry used by `okf library` commands.
+    #[arg(long, global = true, default_value = ".okf/libraries.json")]
+    pub(crate) registry: PathBuf,
 
     /// Output format. JSON is recommended for agents and scripts.
     #[arg(long, global = true, value_enum, default_value = "human")]
@@ -84,6 +88,56 @@ pub(crate) enum Command {
         #[arg(long, value_enum, default_value = "summary")]
         representation: GraphRepresentation,
     },
+    /// Install, mount, navigate, and query pluggable OKF Libraries.
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum LibraryCommand {
+    /// Install/register a local directory or Git repository Library.
+    Add {
+        /// Local directory path or Git repository URL.
+        source: String,
+        /// Stable Library ID. Inferred from source when omitted.
+        #[arg(long)]
+        id: Option<String>,
+        /// Human-readable Library name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Git branch, tag, or commit to check out.
+        #[arg(long = "ref")]
+        reference: Option<String>,
+    },
+    /// Update a Library source. Git sources fetch/pull; local sources are revalidated.
+    Update { id: String },
+    /// Uninstall/unregister a Library and remove managed Git cache data.
+    Remove { id: String },
+    /// Mount an installed Library into the active global knowledge space.
+    Mount { id: String },
+    /// Unmount a Library without uninstalling it.
+    Unmount { id: String },
+    /// List installed Libraries and mount state.
+    List,
+    /// Show semantic catalogs from one or all mounted Libraries.
+    Catalog {
+        /// Optional Library ID. Omit for the global catalog.
+        id: Option<String>,
+    },
+    /// Read one canonical `okf://<library>/<path>` knowledge URI.
+    Read { uri: String },
+    /// Query one Library or every mounted query-capable Library.
+    Query {
+        query: String,
+        /// Restrict query to one Library.
+        #[arg(long)]
+        library: Option<String>,
+        /// Maximum number of evidence hits per Library.
+        #[arg(long, default_value_t = 20, value_parser = parse_limit)]
+        limit: usize,
+    },
 }
 
 impl Command {
@@ -96,6 +150,7 @@ impl Command {
             Self::Inspect { .. } => "inspect",
             Self::Search { .. } => "search",
             Self::Graph { .. } => "graph",
+            Self::Library { .. } => "library",
         }
     }
 }
