@@ -1,13 +1,15 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
+use anyhow::Result;
 use clap::{Parser, error::ErrorKind};
+use serde_json::json;
 
-use crate::cli::{Cli, Command, OutputFormat, ProjectCommand};
+use crate::cli::{Cli, Command, OutputFormat};
 use crate::commands;
+use crate::libraries;
 use crate::library_dispatch;
-use crate::output::{write_json_error, write_outcome};
-use crate::project_context;
+use crate::output::{Outcome, write_json_error, write_outcome};
 
 pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     let json_requested = requests_json(&args);
@@ -37,25 +39,20 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     let command_name = cli.command.name();
     let execution = match &cli.command {
         Command::Library { command } => library_dispatch::execute(&cli.registry, command),
-        Command::Project { command } => match command {
-            ProjectCommand::Init {
-                repository,
-                project,
-                id,
-                force,
-            } => project_context::init(
-                &cli.registry,
-                &cli.project_context,
-                repository,
-                project.as_deref(),
-                id,
-                *force,
-            ),
-            ProjectCommand::Status => project_context::status(&cli.project_context),
-            ProjectCommand::Checkpoint { revision } => {
-                project_context::checkpoint(&cli.project_context, revision.as_deref())
-            }
-        },
+        Command::Search {
+            query,
+            tag,
+            library,
+            limit,
+        } => search_active_knowledge(
+            &cli.bundle,
+            &cli.registry,
+            query,
+            tag,
+            library.as_deref(),
+            *limit,
+        ),
+        Command::Get { id } if id.starts_with("okf://") => libraries::read(&cli.registry, id),
         command => commands::execute(&cli.bundle, command),
     };
     match execution {
@@ -82,6 +79,64 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
             }
             ExitCode::from(3)
         }
+    }
+}
+
+fn search_active_knowledge(
+    bundle: &std::path::Path,
+    registry: &std::path::Path,
+    query: &str,
+    tags: &[String],
+    library: Option<&str>,
+    limit: usize,
+) -> Result<Outcome> {
+    if let Some(library) = library {
+        return libraries::query(registry, Some(library), query, limit);
+    }
+
+    let bundle_command = Command::Search {
+        query: query.to_owned(),
+        tag: tags.to_vec(),
+        library: None,
+        limit,
+    };
+    let bundle_result = commands::execute(bundle, &bundle_command);
+    let library_result = libraries::query(registry, None, query, limit);
+
+    match (bundle_result, library_result) {
+        (Ok(bundle), Ok(libraries)) => {
+            let mut sections = Vec::new();
+            if bundle.human != "no matching documents" {
+                sections.push(bundle.human.clone());
+            }
+            if libraries.human != "no matching knowledge" {
+                sections.push(libraries.human.clone());
+            }
+            Outcome::success(
+                if sections.is_empty() {
+                    "no matching knowledge".to_owned()
+                } else {
+                    sections.join("\n")
+                },
+                json!({
+                    "bundle": bundle.data,
+                    "libraries": libraries.data,
+                }),
+            )
+        }
+        (Ok(bundle), Err(_)) => Ok(bundle),
+        (Err(bundle_error), Ok(libraries)) => {
+            let has_libraries = libraries
+                .data
+                .as_array()
+                .is_some_and(|values| !values.is_empty());
+            if has_libraries {
+                Ok(libraries)
+            } else {
+                Err(bundle_error)
+            }
+        }
+        (Err(bundle_error), Err(_)) => Err(bundle_error),
     }
 }
 

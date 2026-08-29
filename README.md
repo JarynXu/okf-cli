@@ -1,26 +1,32 @@
 # OKF CLI
 
-`okf` is the command-line interface for Open Knowledge Format bundles, pluggable OKF Libraries, and repository-bound Project Context recovery. It remains a thin, deterministic adapter over the `okf` Rust SDK plus application adapters for persistence, Git materialization, and freshness state.
+`okf` is the command-line interface for Open Knowledge Format bundles and pluggable OKF Libraries. Libraries extend the existing OKF knowledge space rather than introducing a second consumption API. The CLI remains a thin adapter over the `okf` Rust SDK.
 
-## Bundle commands
+## Knowledge commands
 
 ```text
 okf init
 okf validate
 okf list
-okf get <id-or-alias>
+okf get <id-or-alias-or-okf-uri>
 okf inspect <id-or-alias>
-okf search <query>
+okf search <query> [--library <id>]
 okf graph
 ```
 
-Use `--bundle <directory>` to select a core bundle and `--output json` for a stable machine-readable envelope.
+Use `--bundle <directory>` to select the ordinary bundle, `--registry <path>` to select the persistent Library registry, and `--output json` for a stable machine-readable envelope.
+
+Without mounted Libraries, these commands keep their original behavior. After Libraries are mounted, the same commands remain the normal interface:
 
 ```bash
-okf --bundle ./knowledge --output json search "runtime architecture" --tag architecture
+okf --bundle ./knowledge --registry ./.okf/libraries.json search "runtime architecture"
+okf --registry ./.okf/libraries.json search "XCAP document selector" --library mcx
+okf --registry ./.okf/libraries.json get okf://mcx/interfaces/xcap
 ```
 
-## Library runtime commands
+`search` without `--library` searches the active knowledge space: the current bundle plus mounted Libraries. Library-owned catalogs, routing hints, and provider capabilities may optimize the internal retrieval path. `--library` is optional advanced scoping, not a separate Library mode.
+
+## Library management commands
 
 Libraries are persistently registered in a runtime registry (default `.okf/libraries.json`). Registration/install and mount state are separate.
 
@@ -31,30 +37,17 @@ okf library remove <id>
 okf library mount <id>
 okf library unmount <id>
 okf library list
-okf library catalog [id]
-okf library read okf://<library>/<path>
-okf library query <query> [--library <id>] [--limit <n>]
 ```
 
-Local directories are mounted live. Git Libraries are cloned into a registry-managed cache and can be updated independently. Both are resolved into the same SDK `LibraryProvider` runtime contract; CLI routing does not branch on storage technology after resolution.
+The `library` command group is the management plane. Knowledge retrieval stays on `search` and `get` whether Libraries exist or not.
 
-The global catalog is dynamically derived from mounted Libraries. Each Library contributes its own semantic catalog, so specialized knowledge packages can define optimized navigation instead of exposing only a root directory.
+Local directories are mounted live. Git Libraries are cloned into a registry-managed cache and can be updated independently. Both resolve into the same SDK `LibraryProvider` contract; after resolution, knowledge consumption does not branch on storage technology.
 
-## Project Context commands
+Each Library may contribute semantic catalog/routing metadata and a provider-specific retrieval strategy. Those are Runtime internals used to improve ordinary `search`; users do not need a separate catalog/query command sequence.
 
-Project Context is an application profile built on the Library Runtime for durable project knowledge across sessions and subagents. Runtime-local profile state defaults to `.okf/project-context.json`; the generated Library scaffold defaults to `.okf/project-context/`.
+## Architectural boundary
 
-```text
-okf project init [--repository <git-repository>] [--project <name>] [--id <library-id>]
-okf project status
-okf project checkpoint [--revision <verified-commit>]
-```
-
-`project init` creates a standard OKF Library containing current architecture, constraints, decisions, components, and append-only history, then registers and mounts it. `project status` compares the last validated revision with repository `HEAD` and returns `UNINITIALIZED`, `VALID`, `DIRTY`, or `UNKNOWN`, along with changed paths and impacted knowledge topics when the Git delta can be established.
-
-When status is `DIRTY`, Agents should revalidate the impacted knowledge frontier rather than automatically relearning the repository. `project checkpoint` only records a revision that has already passed the caller's required project tests, review, and knowledge maintenance; it is deliberately not a substitute for those checks.
-
-Use `--project-context <path>` to select another profile state file and `--output json` for Agent/tool integration.
+Generic OKF tooling is domain-neutral. Installing a concrete Library must never cause `okf` itself to gain application-specific commands. Domain lifecycle, special actions, and domain-specific Agent instructions belong to that Library/application package.
 
 ## Exit codes
 
@@ -65,7 +58,7 @@ Use `--project-context <path>` to select another profile state file and `--outpu
 
 ## SDK dependency
 
-Until the SDK is published to crates.io, `vendor/okf` contains a source snapshot derived from `JarynXu/okf-sdk`. CLI command handlers call that dependency rather than reimplementing OKF parsing, graph traversal, retrieval, or Library runtime semantics. The CLI owns only persistence/materialization and application-adapter concerns such as the local registry file, Git source operations, and Project Context freshness state.
+Until the SDK is published to crates.io, `vendor/okf` contains a source snapshot derived from `JarynXu/okf-sdk`. CLI command handlers call that dependency rather than reimplementing OKF parsing, graph traversal, retrieval, or Library runtime semantics. The CLI owns only persistence/materialization concerns such as the local registry file and invoking Git for Git sources.
 
 ## Status
 
