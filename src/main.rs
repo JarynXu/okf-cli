@@ -8,6 +8,7 @@ mod commands;
 mod libraries;
 mod library_dispatch;
 mod output;
+mod project_context;
 mod view;
 
 use std::env;
