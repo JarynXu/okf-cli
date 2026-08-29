@@ -3,11 +3,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, error::ErrorKind};
 
-use crate::cli::{Cli, Command, OutputFormat, ProjectCommand};
+use crate::cli::{Cli, Command, OutputFormat};
 use crate::commands;
 use crate::library_dispatch;
 use crate::output::{write_json_error, write_outcome};
-use crate::project_context;
 
 pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     let json_requested = requests_json(&args);
@@ -37,25 +36,6 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     let command_name = cli.command.name();
     let execution = match &cli.command {
         Command::Library { command } => library_dispatch::execute(&cli.registry, command),
-        Command::Project { command } => match command {
-            ProjectCommand::Init {
-                repository,
-                project,
-                id,
-                force,
-            } => project_context::init(
-                &cli.registry,
-                &cli.project_context,
-                repository,
-                project.as_deref(),
-                id,
-                *force,
-            ),
-            ProjectCommand::Status => project_context::status(&cli.project_context),
-            ProjectCommand::Checkpoint { revision } => {
-                project_context::checkpoint(&cli.project_context, revision.as_deref())
-            }
-        },
         command => commands::execute(&cli.bundle, command),
     };
     match execution {

@@ -34,9 +34,6 @@ pub(crate) fn execute(bundle_path: &Path, command: &Command) -> Result<Outcome> 
         Command::Library { .. } => {
             bail!("library commands must be dispatched through the Library Runtime")
         }
-        Command::Project { .. } => {
-            bail!("project commands must be dispatched through the Project Context Runtime")
-        }
     }
 }
 
