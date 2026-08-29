@@ -3,8 +3,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, error::ErrorKind};
 
-use crate::cli::{Cli, OutputFormat};
-use crate::commands::execute;
+use crate::cli::{Cli, Command, OutputFormat};
+use crate::commands;
+use crate::library_dispatch;
 use crate::output::{write_json_error, write_outcome};
 
 pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
@@ -33,7 +34,11 @@ pub(crate) fn run(args: Vec<OsString>) -> ExitCode {
     };
 
     let command_name = cli.command.name();
-    match execute(&cli.bundle, &cli.registry, &cli.command) {
+    let execution = match &cli.command {
+        Command::Library { command } => library_dispatch::execute(&cli.registry, command),
+        command => commands::execute(&cli.bundle, command),
+    };
+    match execution {
         Ok(outcome) => match write_outcome(cli.output, command_name, &outcome) {
             Ok(()) => ExitCode::from(outcome.exit_code),
             Err(error) => {
