@@ -112,14 +112,24 @@ pub(crate) fn status(profile_path: &Path) -> Result<Outcome> {
     }
     let profile = load_profile(profile_path)?;
     let current = current_revision(&profile.repository).ok();
+    let working_paths = working_tree_paths(&profile.repository).unwrap_or_default();
     let (state, changed_paths) = match (&profile.validated_revision, &current) {
-        (None, _) => ("UNINITIALIZED", Vec::new()),
-        (Some(_), None) => ("UNKNOWN", Vec::new()),
-        (Some(validated), Some(current)) if validated == current => ("VALID", Vec::new()),
+        (None, _) => ("UNINITIALIZED", working_paths),
+        (Some(_), None) => ("UNKNOWN", working_paths),
+        (Some(validated), Some(current)) if validated == current => {
+            if working_paths.is_empty() {
+                ("VALID", Vec::new())
+            } else {
+                ("DIRTY", working_paths)
+            }
+        }
         (Some(validated), Some(current)) => {
             match changed_paths(&profile.repository, validated, current) {
-                Ok(paths) => ("DIRTY", paths),
-                Err(_) => ("UNKNOWN", Vec::new()),
+                Ok(committed_paths) => (
+                    "DIRTY",
+                    merge_paths(committed_paths, working_paths),
+                ),
+                Err(_) => ("UNKNOWN", working_paths),
             }
         }
     };
@@ -155,7 +165,6 @@ pub(crate) fn checkpoint(profile_path: &Path, revision: Option<&str>) -> Result<
     verify_revision(&profile.repository, &revision)?;
     profile.validated_revision = Some(revision.clone());
     save_profile(profile_path, &profile)?;
-    append_history(profile_path, &revision)?;
     Outcome::success(
         format!("advanced Project Context checkpoint to {revision}"),
         json!({
@@ -289,6 +298,31 @@ fn changed_paths(repository: &Path, from: &str, to: &str) -> Result<Vec<String>>
         .collect())
 }
 
+fn working_tree_paths(repository: &Path) -> Result<Vec<String>> {
+    let mut paths = BTreeSet::new();
+    for args in [
+        ["diff", "--name-only"].as_slice(),
+        ["diff", "--cached", "--name-only"].as_slice(),
+        ["ls-files", "--others", "--exclude-standard"].as_slice(),
+    ] {
+        for path in git_output(repository, args)?.lines() {
+            let path = path.trim();
+            if !path.is_empty() {
+                paths.insert(path.to_owned());
+            }
+        }
+    }
+    Ok(paths.into_iter().collect())
+}
+
+fn merge_paths(left: Vec<String>, right: Vec<String>) -> Vec<String> {
+    left.into_iter()
+        .chain(right)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn git_output(repository: &Path, args: &[&str]) -> Result<String> {
     let output = ProcessCommand::new("git")
         .arg("-C")
@@ -346,19 +380,4 @@ fn save_profile(path: &Path, profile: &Profile) -> Result<()> {
     let mut bytes = serde_json::to_vec_pretty(profile)?;
     bytes.push(b'\n');
     fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
-}
-
-fn append_history(profile_path: &Path, revision: &str) -> Result<()> {
-    let history = profile_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("project-context/history/log.md");
-    if history.exists() {
-        let mut content = fs::read_to_string(&history)?;
-        content.push_str(&format!(
-            "\n## Validated {revision}\n\n- Repository checkpoint advanced to `{revision}`.\n"
-        ));
-        fs::write(history, content)?;
-    }
-    Ok(())
 }
