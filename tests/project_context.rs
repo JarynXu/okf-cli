@@ -37,7 +37,11 @@ fn status(profile: &Path) -> Value {
 
 #[test]
 fn project_context_recovers_committed_and_working_tree_changes() {
-    if ProcessCommand::new("git").arg("--version").output().is_err() {
+    if ProcessCommand::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         return;
     }
 
@@ -47,7 +51,11 @@ fn project_context_recovers_committed_and_working_tree_changes() {
     let registry = runtime.join("libraries.json");
     let profile = runtime.join("project-context.json");
     fs::create_dir_all(repository.join("src")).unwrap();
-    fs::write(repository.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub fn value() -> u8 { 1 }\n",
+    )
+    .unwrap();
 
     git(&repository, &["init"]);
     git(&repository, &["config", "user.email", "test@example.com"]);
@@ -77,7 +85,11 @@ fn project_context_recovers_committed_and_working_tree_changes() {
         .success();
     assert_eq!(status(&profile)["data"]["state"], "VALID");
 
-    fs::write(repository.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n").unwrap();
+    fs::write(
+        repository.join("src/lib.rs"),
+        "pub fn value() -> u8 { 2 }\n",
+    )
+    .unwrap();
     let working = status(&profile);
     assert_eq!(working["data"]["state"], "DIRTY");
     assert!(
@@ -117,6 +129,6 @@ fn project_context_recovers_committed_and_working_tree_changes() {
         .stdout
         .clone();
     let libraries: Value = serde_json::from_slice(&libraries).unwrap();
-    assert_eq!(libraries["data"][0]["id"], "project-context");
+    assert_eq!(libraries["data"][0]["manifest"]["id"], "project-context");
     assert_eq!(libraries["data"][0]["mounted"], true);
 }
