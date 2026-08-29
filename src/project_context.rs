@@ -125,10 +125,7 @@ pub(crate) fn status(profile_path: &Path) -> Result<Outcome> {
         }
         (Some(validated), Some(current)) => {
             match changed_paths(&profile.repository, validated, current) {
-                Ok(committed_paths) => (
-                    "DIRTY",
-                    merge_paths(committed_paths, working_paths),
-                ),
+                Ok(committed_paths) => ("DIRTY", merge_paths(committed_paths, working_paths)),
                 Err(_) => ("UNKNOWN", working_paths),
             }
         }
