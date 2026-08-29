@@ -42,7 +42,11 @@ pub(crate) fn init(
     ensure_git_repository(&repository)?;
     let project_name = project
         .map(str::to_owned)
-        .or_else(|| repository.file_name().map(|value| value.to_string_lossy().into_owned()))
+        .or_else(|| {
+            repository
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+        })
         .unwrap_or_else(|| id.to_owned());
     let bundle = profile_path
         .parent()
@@ -112,11 +116,12 @@ pub(crate) fn status(profile_path: &Path) -> Result<Outcome> {
         (None, _) => ("UNINITIALIZED", Vec::new()),
         (Some(_), None) => ("UNKNOWN", Vec::new()),
         (Some(validated), Some(current)) if validated == current => ("VALID", Vec::new()),
-        (Some(validated), Some(current)) => match changed_paths(&profile.repository, validated, current)
-        {
-            Ok(paths) => ("DIRTY", paths),
-            Err(_) => ("UNKNOWN", Vec::new()),
-        },
+        (Some(validated), Some(current)) => {
+            match changed_paths(&profile.repository, validated, current) {
+                Ok(paths) => ("DIRTY", paths),
+                Err(_) => ("UNKNOWN", Vec::new()),
+            }
+        }
     };
     let impacted_topics = impacted_topics(&changed_paths, &profile.impact_rules);
     Outcome::success(
@@ -227,7 +232,12 @@ fn default_impact_rules(id: &str) -> Vec<ImpactRule> {
     vec![
         ImpactRule {
             topic: format!("okf://{id}/current/architecture"),
-            path_prefixes: vec!["src".into(), "packages".into(), "crates".into(), "docs".into()],
+            path_prefixes: vec![
+                "src".into(),
+                "packages".into(),
+                "crates".into(),
+                "docs".into(),
+            ],
         },
         ImpactRule {
             topic: format!("okf://{id}/current/components"),
@@ -259,11 +269,18 @@ fn current_revision(repository: &Path) -> Result<String> {
 }
 
 fn verify_revision(repository: &Path, revision: &str) -> Result<()> {
-    git_output(repository, &["rev-parse", "--verify", &format!("{revision}^{{commit}}")]).map(|_| ())
+    git_output(
+        repository,
+        &["rev-parse", "--verify", &format!("{revision}^{{commit}}")],
+    )
+    .map(|_| ())
 }
 
 fn changed_paths(repository: &Path, from: &str, to: &str) -> Result<Vec<String>> {
-    let output = git_output(repository, &["diff", "--name-only", &format!("{from}..{to}")])?;
+    let output = git_output(
+        repository,
+        &["diff", "--name-only", &format!("{from}..{to}")],
+    )?;
     Ok(output
         .lines()
         .map(str::trim)
@@ -338,7 +355,9 @@ fn append_history(profile_path: &Path, revision: &str) -> Result<()> {
         .join("project-context/history/log.md");
     if history.exists() {
         let mut content = fs::read_to_string(&history)?;
-        content.push_str(&format!("\n## Validated {revision}\n\n- Repository checkpoint advanced to `{revision}`.\n"));
+        content.push_str(&format!(
+            "\n## Validated {revision}\n\n- Repository checkpoint advanced to `{revision}`.\n"
+        ));
         fs::write(history, content)?;
     }
     Ok(())
