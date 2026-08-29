@@ -42,9 +42,9 @@ impl LibraryId {
     pub fn parse(value: impl Into<String>) -> LibraryResult<Self> {
         let value = value.into();
         let valid = !value.is_empty()
-            && value
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'));
+            && value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            });
         if !valid {
             return Err(LibraryError::InvalidLibraryId(value));
         }
@@ -131,12 +131,17 @@ pub enum LibraryCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum LibrarySource {
-    Local { path: PathBuf },
+    Local {
+        path: PathBuf,
+    },
     Git {
         repository: String,
         reference: Option<String>,
     },
-    Custom { kind: String, location: String },
+    Custom {
+        kind: String,
+        location: String,
+    },
 }
 
 /// Portable Library manifest.
@@ -267,7 +272,9 @@ pub trait LibraryProvider: Send + Sync {
     fn capabilities(&self) -> BTreeSet<LibraryCapability>;
     fn catalog(&self, library: &LibraryId) -> LibraryResult<LibraryCatalog> {
         let _ = library;
-        Err(LibraryError::UnsupportedCapability(LibraryCapability::Catalog))
+        Err(LibraryError::UnsupportedCapability(
+            LibraryCapability::Catalog,
+        ))
     }
     fn list(&self, library: &LibraryId, path: &str) -> LibraryResult<Vec<KnowledgeNode>> {
         let _ = (library, path);
@@ -277,12 +284,20 @@ pub trait LibraryProvider: Send + Sync {
         let _ = uri;
         Err(LibraryError::UnsupportedCapability(LibraryCapability::Read))
     }
-    fn query(&self, library: &LibraryId, query: &LibraryQuery) -> LibraryResult<LibraryQueryResult> {
+    fn query(
+        &self,
+        library: &LibraryId,
+        query: &LibraryQuery,
+    ) -> LibraryResult<LibraryQueryResult> {
         let _ = (library, query);
-        Err(LibraryError::UnsupportedCapability(LibraryCapability::Query))
+        Err(LibraryError::UnsupportedCapability(
+            LibraryCapability::Query,
+        ))
     }
     fn refresh(&self) -> LibraryResult<()> {
-        Err(LibraryError::UnsupportedCapability(LibraryCapability::Refresh))
+        Err(LibraryError::UnsupportedCapability(
+            LibraryCapability::Refresh,
+        ))
     }
 }
 
@@ -364,7 +379,10 @@ impl LibraryRegistry {
     }
     /// Registered manifests.
     pub fn libraries(&self) -> Vec<&LibraryManifest> {
-        self.registered.values().map(LibraryInstance::manifest).collect()
+        self.registered
+            .values()
+            .map(LibraryInstance::manifest)
+            .collect()
     }
     /// Mounted identifiers.
     pub fn mounted(&self) -> impl Iterator<Item = &LibraryId> {
@@ -406,12 +424,19 @@ impl LibraryRegistry {
         library.provider.query(id, query)
     }
     /// Queries every mounted query-capable Library.
-    pub fn query_all(&self, query: &LibraryQuery) -> Vec<(LibraryId, LibraryResult<LibraryQueryResult>)> {
+    pub fn query_all(
+        &self,
+        query: &LibraryQuery,
+    ) -> Vec<(LibraryId, LibraryResult<LibraryQueryResult>)> {
         self.mounted
             .iter()
             .filter_map(|id| {
                 let library = self.registered.get(id)?;
-                if library.provider.capabilities().contains(&LibraryCapability::Query) {
+                if library
+                    .provider
+                    .capabilities()
+                    .contains(&LibraryCapability::Query)
+                {
                     Some((id.clone(), library.provider.query(id, query)))
                 } else {
                     None
@@ -431,7 +456,10 @@ impl LibraryRegistry {
     }
 }
 
-fn require_capability(provider: &dyn LibraryProvider, capability: LibraryCapability) -> LibraryResult<()> {
+fn require_capability(
+    provider: &dyn LibraryProvider,
+    capability: LibraryCapability,
+) -> LibraryResult<()> {
     if provider.capabilities().contains(&capability) {
         Ok(())
     } else {

@@ -1,28 +1,54 @@
 //! Extensible document metadata and directed references.
 
-use std::collections::{BTreeMap, BTreeSet};
-use serde::{Deserialize, Deserializer, Serialize};
 use super::DocumentId;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A directed relation from one document to another.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Reference { target: DocumentId, relation: String }
+pub struct Reference {
+    target: DocumentId,
+    relation: String,
+}
 impl Reference {
     /// Creates a reference with the supplied relation name.
-    pub fn new(target: DocumentId, relation: impl Into<String>) -> Self { Self { target, relation: relation.into() } }
+    pub fn new(target: DocumentId, relation: impl Into<String>) -> Self {
+        Self {
+            target,
+            relation: relation.into(),
+        }
+    }
     /// Creates a `related` reference.
-    pub fn related(target: DocumentId) -> Self { Self::new(target, "related") }
+    pub fn related(target: DocumentId) -> Self {
+        Self::new(target, "related")
+    }
     /// Returns the referenced identifier or alias.
-    pub fn target(&self) -> &DocumentId { &self.target }
+    pub fn target(&self) -> &DocumentId {
+        &self.target
+    }
     /// Returns the relation name.
-    pub fn relation(&self) -> &str { &self.relation }
+    pub fn relation(&self) -> &str {
+        &self.relation
+    }
 }
 impl<'de> Deserialize<'de> for Reference {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         #[serde(untagged)]
-        enum ReferenceInput { Shorthand(DocumentId), Detailed { target: DocumentId, #[serde(default = "default_relation")] relation: String } }
-        fn default_relation() -> String { "related".to_owned() }
+        enum ReferenceInput {
+            Shorthand(DocumentId),
+            Detailed {
+                target: DocumentId,
+                #[serde(default = "default_relation")]
+                relation: String,
+            },
+        }
+        fn default_relation() -> String {
+            "related".to_owned()
+        }
         match ReferenceInput::deserialize(deserializer)? {
             ReferenceInput::Shorthand(target) => Ok(Self::related(target)),
             ReferenceInput::Detailed { target, relation } => Ok(Self::new(target, relation)),
