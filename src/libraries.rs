@@ -73,7 +73,11 @@ impl LibraryProvider for ManifestBundleProvider {
         self.inner.read(uri)
     }
 
-    fn query(&self, library: &LibraryId, query: &LibraryQuery) -> LibraryResult<LibraryQueryResult> {
+    fn query(
+        &self,
+        library: &LibraryId,
+        query: &LibraryQuery,
+    ) -> LibraryResult<LibraryQueryResult> {
         self.inner.query(library, query)
     }
 
@@ -90,8 +94,9 @@ pub(crate) fn add_library(
     reference: Option<&str>,
 ) -> Result<Outcome> {
     let mut registry = load_registry(registry_path)?;
-    let provisional_id = LibraryId::parse(id.map(str::to_owned).unwrap_or_else(|| infer_id(source)))
-        .map_err(|error| anyhow!(error.to_string()))?;
+    let provisional_id =
+        LibraryId::parse(id.map(str::to_owned).unwrap_or_else(|| infer_id(source)))
+            .map_err(|error| anyhow!(error.to_string()))?;
 
     let (library_source, materialized) = if is_git_source(source) {
         let cache = cache_path(registry_path, &provisional_id);
@@ -106,7 +111,10 @@ pub(crate) fn add_library(
     } else {
         let path = PathBuf::from(source);
         if !path.is_dir() {
-            bail!("local library source '{}' is not a directory", path.display());
+            bail!(
+                "local library source '{}' is not a directory",
+                path.display()
+            );
         }
         (LibrarySource::Local { path: path.clone() }, path)
     };
@@ -210,7 +218,10 @@ pub(crate) fn update_library(registry_path: &Path, id: &str) -> Result<Outcome> 
         }
         Some(LibrarySource::Local { path }) => {
             if !path.is_dir() {
-                bail!("local library source '{}' is no longer available", path.display());
+                bail!(
+                    "local library source '{}' is no longer available",
+                    path.display()
+                );
             }
             path.clone()
         }
@@ -283,7 +294,11 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
             .map(|(id, entry)| {
                 format!(
                     "{}\t{}\t{}",
-                    if entry.mounted { "mounted" } else { "unmounted" },
+                    if entry.mounted {
+                        "mounted"
+                    } else {
+                        "unmounted"
+                    },
                     id,
                     entry.manifest.name
                 )
@@ -297,10 +312,17 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
 pub(crate) fn catalog(registry_path: &Path, id: Option<&str>) -> Result<Outcome> {
     let runtime = build_runtime(registry_path)?;
     let catalogs = if let Some(id) = id {
-        let library_id = LibraryId::parse(id.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
-        vec![runtime.catalog(&library_id).map_err(|error| anyhow!(error.to_string()))?]
+        let library_id =
+            LibraryId::parse(id.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
+        vec![
+            runtime
+                .catalog(&library_id)
+                .map_err(|error| anyhow!(error.to_string()))?,
+        ]
     } else {
-        runtime.global_catalog().map_err(|error| anyhow!(error.to_string()))?
+        runtime
+            .global_catalog()
+            .map_err(|error| anyhow!(error.to_string()))?
     };
     let human = if catalogs.is_empty() {
         "no mounted library catalogs".to_owned()
@@ -308,9 +330,10 @@ pub(crate) fn catalog(registry_path: &Path, id: Option<&str>) -> Result<Outcome>
         catalogs
             .iter()
             .flat_map(|catalog| {
-                catalog.entries.iter().map(move |entry| {
-                    format!("{}\t{}\t{}", catalog.library, entry.id, entry.title)
-                })
+                catalog
+                    .entries
+                    .iter()
+                    .map(move |entry| format!("{}\t{}\t{}", catalog.library, entry.id, entry.title))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -321,7 +344,9 @@ pub(crate) fn catalog(registry_path: &Path, id: Option<&str>) -> Result<Outcome>
 pub(crate) fn read(registry_path: &Path, uri: &str) -> Result<Outcome> {
     let runtime = build_runtime(registry_path)?;
     let uri = KnowledgeUri::parse(uri).map_err(|error| anyhow!(error.to_string()))?;
-    let content = runtime.read(&uri).map_err(|error| anyhow!(error.to_string()))?;
+    let content = runtime
+        .read(&uri)
+        .map_err(|error| anyhow!(error.to_string()))?;
     Outcome::success(content.clone(), json!({"uri": uri, "content": content}))
 }
 
@@ -334,8 +359,11 @@ pub(crate) fn query(
     let runtime = build_runtime(registry_path)?;
     let request = LibraryQuery::new(text).limit(limit);
     if let Some(library) = library {
-        let id = LibraryId::parse(library.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
-        let result = runtime.query(&id, &request).map_err(|error| anyhow!(error.to_string()))?;
+        let id =
+            LibraryId::parse(library.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
+        let result = runtime
+            .query(&id, &request)
+            .map_err(|error| anyhow!(error.to_string()))?;
         let human = format_query_hits(&id, &result.hits);
         Outcome::success(human, json!({"library": id, "result": result}))
     } else {
@@ -355,7 +383,11 @@ pub(crate) fn query(
             if human.is_empty() {
                 "no matching knowledge".to_owned()
             } else {
-                human.into_iter().filter(|value| !value.is_empty()).collect::<Vec<_>>().join("\n")
+                human
+                    .into_iter()
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n")
             },
             json_results,
         )
@@ -382,11 +414,19 @@ fn format_query_hits(id: &LibraryId, hits: &[okf::LibraryQueryHit]) -> String {
 fn build_runtime(registry_path: &Path) -> Result<LibraryRegistry> {
     let registry_file = load_registry(registry_path)?;
     let mut runtime = LibraryRegistry::new();
-    for entry in registry_file.libraries.values().filter(|entry| entry.mounted) {
+    for entry in registry_file
+        .libraries
+        .values()
+        .filter(|entry| entry.mounted)
+    {
         let instance = resolve_instance(entry)?;
         let id = instance.manifest().id.clone();
-        runtime.register(instance).map_err(|error| anyhow!(error.to_string()))?;
-        runtime.mount(&id).map_err(|error| anyhow!(error.to_string()))?;
+        runtime
+            .register(instance)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        runtime
+            .mount(&id)
+            .map_err(|error| anyhow!(error.to_string()))?;
     }
     Ok(runtime)
 }
@@ -407,7 +447,10 @@ fn resolve_instance(entry: &RegistryEntry) -> Result<LibraryInstance> {
         .transpose()
         .map_err(|error| anyhow!(error.to_string()))?;
     let provider = ManifestBundleProvider::new(BundleLibraryProvider::new(bundle), catalog);
-    Ok(LibraryInstance::new(entry.manifest.clone(), Arc::new(provider)))
+    Ok(LibraryInstance::new(
+        entry.manifest.clone(),
+        Arc::new(provider),
+    ))
 }
 
 fn materialized_path(entry: &RegistryEntry) -> Result<&Path> {
@@ -443,7 +486,10 @@ fn load_registry(path: &Path) -> Result<RegistryFile> {
 }
 
 fn save_registry(path: &Path, registry: &RegistryFile) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
