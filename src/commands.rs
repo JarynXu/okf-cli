@@ -31,7 +31,9 @@ pub(crate) fn execute(bundle_path: &Path, command: &Command) -> Result<Outcome> 
         Command::Graph { id, representation } => {
             graph_bundle(bundle_path, id.as_deref(), *representation)
         }
-        Command::Library { .. } => bail!("library commands must be dispatched through the Library Runtime"),
+        Command::Library { .. } => {
+            bail!("library commands must be dispatched through the Library Runtime")
+        }
     }
 }
 
