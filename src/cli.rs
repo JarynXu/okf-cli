@@ -119,10 +119,16 @@ pub(crate) enum LibraryCommand {
     /// Uninstall/unregister a Library and remove managed Git cache data.
     Remove { id: String },
     /// Mount an installed Library into the active global knowledge space.
-    Mount { id: String },
+    Mount {
+        id: String,
+        /// Explicitly authorize one provider deployment kind declared by this Library.
+        /// Repeat for multiple kinds. Authorization is persisted in the local registry.
+        #[arg(long = "allow-provider")]
+        allow_provider: Vec<String>,
+    },
     /// Unmount a Library without uninstalling it.
     Unmount { id: String },
-    /// List installed Libraries and mount state.
+    /// List installed Libraries and mount/provider authorization state.
     List,
 }
 
