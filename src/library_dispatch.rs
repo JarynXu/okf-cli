@@ -25,12 +25,5 @@ pub(crate) fn execute(registry_path: &Path, command: &LibraryCommand) -> Result<
         LibraryCommand::Mount { id } => libraries::set_mounted(registry_path, id, true),
         LibraryCommand::Unmount { id } => libraries::set_mounted(registry_path, id, false),
         LibraryCommand::List => libraries::list_libraries(registry_path),
-        LibraryCommand::Catalog { id } => libraries::catalog(registry_path, id.as_deref()),
-        LibraryCommand::Read { uri } => libraries::read(registry_path, uri),
-        LibraryCommand::Query {
-            query,
-            library,
-            limit,
-        } => libraries::query(registry_path, library.as_deref(), query, *limit),
     }
 }
