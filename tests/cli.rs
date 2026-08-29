@@ -101,7 +101,7 @@ fn invalid_usage_is_json_when_requested() {
 }
 
 #[test]
-fn library_local_lifecycle_and_query_are_persistent() {
+fn mounted_library_extends_existing_search_and_get_commands() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let registry = temporary.path().join("libraries.json");
     let fixture = fs::canonicalize("tests/fixtures/valid").expect("fixture path");
@@ -126,7 +126,7 @@ fn library_local_lifecycle_and_query_are_persistent() {
     okf()
         .arg("--registry")
         .arg(&registry)
-        .args(["library", "catalog", "docs"])
+        .args(["search", "workflow runtime", "--library", "docs"])
         .assert()
         .success()
         .stdout(predicate::str::contains("architecture/runtime"));
@@ -134,18 +134,10 @@ fn library_local_lifecycle_and_query_are_persistent() {
     okf()
         .arg("--registry")
         .arg(&registry)
-        .args(["library", "read", "okf://docs/architecture/runtime"])
+        .args(["get", "okf://docs/architecture/runtime"])
         .assert()
         .success()
         .stdout(predicate::str::contains("executes configured workflows"));
-
-    okf()
-        .arg("--registry")
-        .arg(&registry)
-        .args(["library", "query", "workflow runtime", "--library", "docs"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("architecture/runtime"));
 
     okf()
         .arg("--registry")
@@ -163,7 +155,43 @@ fn library_local_lifecycle_and_query_are_persistent() {
 }
 
 #[test]
-fn library_manifest_controls_identity_semantic_catalog_and_query_guidance() {
+fn search_without_library_flag_combines_bundle_and_mounted_libraries() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let registry = temporary.path().join("libraries.json");
+    let fixture = fs::canonicalize("tests/fixtures/valid").expect("fixture path");
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "add"])
+        .arg(&fixture)
+        .args(["--id", "docs"])
+        .assert()
+        .success();
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "mount", "docs"])
+        .assert()
+        .success();
+
+    let output = okf()
+        .args(["--output", "json", "--bundle", "tests/fixtures/valid"])
+        .arg("--registry")
+        .arg(&registry)
+        .args(["search", "workflow runtime"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&output).unwrap();
+    assert!(value["data"]["bundle"].is_array());
+    assert!(value["data"]["libraries"].is_array());
+}
+
+#[test]
+fn library_manifest_controls_identity_and_query_guidance_without_new_consumption_commands() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let registry = temporary.path().join("libraries.json");
     let library = temporary.path().join("mcx-library");
@@ -208,22 +236,13 @@ query:
         .assert()
         .success();
 
-    let output = okf()
-        .args(["--output", "json"])
+    okf()
         .arg("--registry")
         .arg(&registry)
-        .args(["library", "catalog", "mcx"])
+        .args(["search", "AUID document selector", "--library", "mcx"])
         .assert()
         .success()
-        .get_output()
-        .stdout
-        .clone();
-    let value: Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(value["data"][0]["entries"][0]["id"], "xcap");
-    assert_eq!(
-        value["data"][0]["entries"][0]["uri"]["path"],
-        "interfaces/xcap"
-    );
+        .stdout(predicate::str::contains("interfaces/xcap"));
 
     let output = okf()
         .args(["--output", "json"])
@@ -241,12 +260,8 @@ query:
 }
 
 #[test]
-fn git_library_materializes_and_mounts_through_the_same_runtime_contract() {
-    if ProcessCommand::new("git")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+fn git_library_materializes_and_uses_the_same_get_command() {
+    if ProcessCommand::new("git").arg("--version").output().is_err() {
         return;
     }
 
@@ -264,46 +279,11 @@ fn git_library_materializes_and_mounts_through_the_same_runtime_contract() {
         "schema_version: \"1\"\nid: git-knowledge\nname: Git Knowledge\ncatalog:\n  - id: root\n    title: Root\n    path: index\n",
     )
     .unwrap();
-    assert!(
-        ProcessCommand::new("git")
-            .current_dir(&source)
-            .args(["init"])
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        ProcessCommand::new("git")
-            .current_dir(&source)
-            .args(["config", "user.email", "test@example.com"])
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        ProcessCommand::new("git")
-            .current_dir(&source)
-            .args(["config", "user.name", "OKF Test"])
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        ProcessCommand::new("git")
-            .current_dir(&source)
-            .args(["add", "."])
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        ProcessCommand::new("git")
-            .current_dir(&source)
-            .args(["commit", "-m", "initial"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    assert!(ProcessCommand::new("git").current_dir(&source).args(["init"]).status().unwrap().success());
+    assert!(ProcessCommand::new("git").current_dir(&source).args(["config", "user.email", "test@example.com"]).status().unwrap().success());
+    assert!(ProcessCommand::new("git").current_dir(&source).args(["config", "user.name", "OKF Test"]).status().unwrap().success());
+    assert!(ProcessCommand::new("git").current_dir(&source).args(["add", "."]).status().unwrap().success());
+    assert!(ProcessCommand::new("git").current_dir(&source).args(["commit", "-m", "initial"]).status().unwrap().success());
 
     okf()
         .arg("--registry")
@@ -322,7 +302,7 @@ fn git_library_materializes_and_mounts_through_the_same_runtime_contract() {
     okf()
         .arg("--registry")
         .arg(&registry)
-        .args(["library", "read", "okf://git-knowledge/index"])
+        .args(["get", "okf://git-knowledge/index"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Knowledge cloned from Git"));
