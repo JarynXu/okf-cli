@@ -97,3 +97,65 @@ fn invalid_usage_is_json_when_requested() {
     assert_eq!(value["ok"], false);
     assert_eq!(value["error"]["kind"], "usage");
 }
+
+#[test]
+fn library_local_lifecycle_and_query_are_persistent() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let registry = temporary.path().join("libraries.json");
+    let fixture = std::fs::canonicalize("tests/fixtures/valid").expect("fixture path");
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "add"])
+        .arg(&fixture)
+        .args(["--id", "docs"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("installed docs"));
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "mount", "docs"])
+        .assert()
+        .success();
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "catalog", "docs"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("architecture/runtime"));
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "read", "okf://docs/architecture/runtime"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("executes configured workflows"));
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "query", "workflow runtime", "--library", "docs"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("architecture/runtime"));
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "unmount", "docs"])
+        .assert()
+        .success();
+
+    okf()
+        .arg("--registry")
+        .arg(&registry)
+        .args(["library", "remove", "docs"])
+        .assert()
+        .success();
+}
