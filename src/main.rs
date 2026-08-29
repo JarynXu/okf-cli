@@ -6,6 +6,7 @@ mod app;
 mod cli;
 mod commands;
 mod libraries;
+mod library_dispatch;
 mod output;
 mod view;
 
