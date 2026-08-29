@@ -31,6 +31,10 @@ pub(crate) struct Cli {
     #[arg(long, global = true, default_value = ".okf/libraries.json")]
     pub(crate) registry: PathBuf,
 
+    /// Project Context profile state used by `okf project` commands.
+    #[arg(long, global = true, default_value = ".okf/project-context.json")]
+    pub(crate) project_context: PathBuf,
+
     /// Output format. JSON is recommended for agents and scripts.
     #[arg(long, global = true, value_enum, default_value = "human")]
     pub(crate) output: OutputFormat,
@@ -93,6 +97,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: LibraryCommand,
     },
+    /// Bootstrap, recover, and checkpoint a repository-bound Project Context Library.
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -140,6 +149,33 @@ pub(crate) enum LibraryCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProjectCommand {
+    /// Create and mount a Project Context Library scaffold for a Git repository.
+    Init {
+        /// Git repository to bind to the context profile.
+        #[arg(long, default_value = ".")]
+        repository: PathBuf,
+        /// Human-readable project name. Inferred from the repository directory when omitted.
+        #[arg(long)]
+        project: Option<String>,
+        /// Stable Library ID.
+        #[arg(long, default_value = "project-context")]
+        id: String,
+        /// Rebuild an existing scaffold. Re-installation is intentionally not attempted.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Evaluate recovery freshness against the current Git revision and compute impacted topics.
+    Status,
+    /// Advance the validated revision after required source/test verification has completed.
+    Checkpoint {
+        /// Explicit commit revision. Defaults to repository HEAD.
+        #[arg(long)]
+        revision: Option<String>,
+    },
+}
+
 impl Command {
     pub(crate) fn name(&self) -> &'static str {
         match self {
@@ -151,6 +187,7 @@ impl Command {
             Self::Search { .. } => "search",
             Self::Graph { .. } => "graph",
             Self::Library { .. } => "library",
+            Self::Project { .. } => "project",
         }
     }
 }

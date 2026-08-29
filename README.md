@@ -1,6 +1,6 @@
 # OKF CLI
 
-`okf` is the command-line interface for Open Knowledge Format bundles and pluggable OKF Libraries. It remains a thin, deterministic adapter over the `okf` Rust SDK.
+`okf` is the command-line interface for Open Knowledge Format bundles, pluggable OKF Libraries, and repository-bound Project Context recovery. It remains a thin, deterministic adapter over the `okf` Rust SDK plus application adapters for persistence, Git materialization, and freshness state.
 
 ## Bundle commands
 
@@ -40,6 +40,22 @@ Local directories are mounted live. Git Libraries are cloned into a registry-man
 
 The global catalog is dynamically derived from mounted Libraries. Each Library contributes its own semantic catalog, so specialized knowledge packages can define optimized navigation instead of exposing only a root directory.
 
+## Project Context commands
+
+Project Context is an application profile built on the Library Runtime for durable project knowledge across sessions and subagents. Runtime-local profile state defaults to `.okf/project-context.json`; the generated Library scaffold defaults to `.okf/project-context/`.
+
+```text
+okf project init [--repository <git-repository>] [--project <name>] [--id <library-id>]
+okf project status
+okf project checkpoint [--revision <verified-commit>]
+```
+
+`project init` creates a standard OKF Library containing current architecture, constraints, decisions, components, and append-only history, then registers and mounts it. `project status` compares the last validated revision with repository `HEAD` and returns `UNINITIALIZED`, `VALID`, `DIRTY`, or `UNKNOWN`, along with changed paths and impacted knowledge topics when the Git delta can be established.
+
+When status is `DIRTY`, Agents should revalidate the impacted knowledge frontier rather than automatically relearning the repository. `project checkpoint` only records a revision that has already passed the caller's required project tests, review, and knowledge maintenance; it is deliberately not a substitute for those checks.
+
+Use `--project-context <path>` to select another profile state file and `--output json` for Agent/tool integration.
+
 ## Exit codes
 
 - `0`: command completed and validation policy passed.
@@ -49,7 +65,7 @@ The global catalog is dynamically derived from mounted Libraries. Each Library c
 
 ## SDK dependency
 
-Until the SDK is published to crates.io, `vendor/okf` contains a source snapshot derived from `JarynXu/okf-sdk`. CLI command handlers call that dependency rather than reimplementing OKF parsing, graph traversal, retrieval, or Library runtime semantics. The CLI owns only persistence/materialization concerns such as the local registry file and invoking Git for Git sources.
+Until the SDK is published to crates.io, `vendor/okf` contains a source snapshot derived from `JarynXu/okf-sdk`. CLI command handlers call that dependency rather than reimplementing OKF parsing, graph traversal, retrieval, or Library runtime semantics. The CLI owns only persistence/materialization and application-adapter concerns such as the local registry file, Git source operations, and Project Context freshness state.
 
 ## Status
 
