@@ -254,10 +254,9 @@ mod tests {
 
     #[test]
     fn schema_one_accepts_provider_deployments_without_breaking_old_manifests() {
-        let old = LibraryPackageManifest::parse_yaml(
-            "schema_version: \"1\"\nid: demo\nname: Demo\n",
-        )
-        .expect("old manifest");
+        let old =
+            LibraryPackageManifest::parse_yaml("schema_version: \"1\"\nid: demo\nname: Demo\n")
+                .expect("old manifest");
         assert!(old.providers.is_empty());
 
         let deployed = LibraryPackageManifest::parse_yaml(

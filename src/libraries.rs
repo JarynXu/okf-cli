@@ -58,7 +58,10 @@ pub(crate) fn add_library(
     } else {
         let path = PathBuf::from(source);
         if !path.is_dir() {
-            bail!("local Library source '{}' is not a directory", path.display());
+            bail!(
+                "local Library source '{}' is not a directory",
+                path.display()
+            );
         }
         let path = path
             .canonicalize()
@@ -232,7 +235,11 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
                 };
                 format!(
                     "{}\t{}\t{}\tproviders={approvals}",
-                    if entry.mounted { "mounted" } else { "unmounted" },
+                    if entry.mounted {
+                        "mounted"
+                    } else {
+                        "unmounted"
+                    },
                     id,
                     entry.manifest.name
                 )
@@ -249,7 +256,10 @@ pub(crate) fn read(registry_path: &Path, uri: &str) -> Result<Outcome> {
     let content = runtime
         .read(&uri)
         .map_err(|error| anyhow!(error.to_string()))?;
-    Outcome::success(content.clone(), json!({"uri": uri.to_string(), "content": content}))
+    Outcome::success(
+        content.clone(),
+        json!({"uri": uri.to_string(), "content": content}),
+    )
 }
 
 pub(crate) fn query(
@@ -261,7 +271,8 @@ pub(crate) fn query(
     let runtime = build_runtime(registry_path)?;
     let request = LibraryQuery::new(text).limit(limit);
     if let Some(library) = library {
-        let id = LibraryId::parse(library.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
+        let id =
+            LibraryId::parse(library.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
         let result = runtime
             .query(&id, &request)
             .map_err(|error| anyhow!(error.to_string()))?;
@@ -343,11 +354,7 @@ fn resolve_instance(entry: &RegistryEntry) -> Result<LibraryInstance> {
             if !entry.approved_provider_kinds.contains(&declaration.kind) {
                 continue;
             }
-            stack.push(resolve_provider(
-                declaration,
-                &entry.manifest.id,
-                root,
-            )?);
+            stack.push(resolve_provider(declaration, &entry.manifest.id, root)?);
         }
     }
 
@@ -483,10 +490,7 @@ fn parse_capability(value: &str) -> Result<LibraryCapability> {
     }
 }
 
-fn required_config_string(
-    declaration: &LibraryProviderDeclaration,
-    key: &str,
-) -> Result<String> {
+fn required_config_string(declaration: &LibraryProviderDeclaration, key: &str) -> Result<String> {
     optional_config_string(declaration, key)?.ok_or_else(|| {
         anyhow!(
             "provider '{}' requires string config '{}'",
@@ -511,10 +515,7 @@ fn optional_config_string(
     }
 }
 
-fn optional_config_u64(
-    declaration: &LibraryProviderDeclaration,
-    key: &str,
-) -> Result<Option<u64>> {
+fn optional_config_u64(declaration: &LibraryProviderDeclaration, key: &str) -> Result<Option<u64>> {
     match declaration.config.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
@@ -532,10 +533,7 @@ fn optional_config_u64(
     }
 }
 
-fn config_string_array(
-    declaration: &LibraryProviderDeclaration,
-    key: &str,
-) -> Result<Vec<String>> {
+fn config_string_array(declaration: &LibraryProviderDeclaration, key: &str) -> Result<Vec<String>> {
     match declaration.config.get(key) {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(values)) => values
@@ -608,7 +606,10 @@ fn refresh_materialized_source(entry: &RegistryEntry, id: &str) -> Result<PathBu
         }
         Some(LibrarySource::Local { path }) => {
             if !path.is_dir() {
-                bail!("local Library source '{}' is no longer available", path.display());
+                bail!(
+                    "local Library source '{}' is no longer available",
+                    path.display()
+                );
             }
             Ok(path.clone())
         }
@@ -749,9 +750,8 @@ fn run_git(path: &Path, args: &[&str]) -> Result<()> {
 
 fn cleanup_failed_git_install(source: &LibrarySource, materialized: &Path) -> Result<()> {
     if matches!(source, LibrarySource::Git { .. }) && materialized.exists() {
-        fs::remove_dir_all(materialized).with_context(|| {
-            format!("failed to clean Git cache {}", materialized.display())
-        })?;
+        fs::remove_dir_all(materialized)
+            .with_context(|| format!("failed to clean Git cache {}", materialized.display()))?;
     }
     Ok(())
 }
@@ -763,8 +763,14 @@ mod tests {
     #[test]
     fn plain_process_commands_resolve_through_path() {
         let root = Path::new("/tmp/library");
-        assert_eq!(resolve_process_command(root, "project-context"), PathBuf::from("project-context"));
-        assert_eq!(resolve_process_command(root, "./bin/provider"), root.join("./bin/provider"));
+        assert_eq!(
+            resolve_process_command(root, "project-context"),
+            PathBuf::from("project-context")
+        );
+        assert_eq!(
+            resolve_process_command(root, "./bin/provider"),
+            root.join("./bin/provider")
+        );
     }
 
     #[test]

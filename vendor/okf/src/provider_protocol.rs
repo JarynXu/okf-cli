@@ -52,7 +52,9 @@ pub struct ProviderRequest {
 
 impl ProviderRequest {
     /// Catalog request.
-    pub fn catalog(library: LibraryId) -> Self { Self::new(library, ProviderOperation::Catalog) }
+    pub fn catalog(library: LibraryId) -> Self {
+        Self::new(library, ProviderOperation::Catalog)
+    }
     /// List request.
     pub fn list(library: LibraryId, path: impl Into<String>) -> Self {
         let mut value = Self::new(library, ProviderOperation::List);
@@ -72,9 +74,18 @@ impl ProviderRequest {
         value
     }
     /// Refresh request.
-    pub fn refresh(library: LibraryId) -> Self { Self::new(library, ProviderOperation::Refresh) }
+    pub fn refresh(library: LibraryId) -> Self {
+        Self::new(library, ProviderOperation::Refresh)
+    }
     fn new(library: LibraryId, operation: ProviderOperation) -> Self {
-        Self { protocol: PROVIDER_PROTOCOL_V1.to_owned(), operation, library, path: None, uri: None, query: None }
+        Self {
+            protocol: PROVIDER_PROTOCOL_V1.to_owned(),
+            operation,
+            library,
+            path: None,
+            uri: None,
+            query: None,
+        }
     }
 }
 
@@ -107,57 +118,142 @@ impl ProviderResponse {
     }
     /// Decode catalog with canonical URI strings.
     pub fn into_catalog(self) -> LibraryResult<LibraryCatalog> {
-        let wire: WireCatalog = serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
+        let wire: WireCatalog =
+            serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
         let library = LibraryId::parse(wire.library)?;
-        let entries = wire.entries.into_iter().map(|entry| {
-            let uri = KnowledgeUri::parse(&entry.uri)?;
-            if uri.library() != &library {
-                return Err(LibraryError::Provider(format!("catalog URI '{uri}' does not belong to Library '{library}'")));
-            }
-            Ok(CatalogEntry { id: entry.id, title: entry.title, description: entry.description, uri, terms: entry.terms })
-        }).collect::<LibraryResult<Vec<_>>>()?;
+        let entries = wire
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let uri = KnowledgeUri::parse(&entry.uri)?;
+                if uri.library() != &library {
+                    return Err(LibraryError::Provider(format!(
+                        "catalog URI '{uri}' does not belong to Library '{library}'"
+                    )));
+                }
+                Ok(CatalogEntry {
+                    id: entry.id,
+                    title: entry.title,
+                    description: entry.description,
+                    uri,
+                    terms: entry.terms,
+                })
+            })
+            .collect::<LibraryResult<Vec<_>>>()?;
         Ok(LibraryCatalog { library, entries })
     }
     /// Decode logical nodes with canonical URI strings.
     pub fn into_nodes(self) -> LibraryResult<Vec<KnowledgeNode>> {
-        let values: Vec<WireNode> = serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
-        values.into_iter().map(|value| Ok(KnowledgeNode {
-            uri: KnowledgeUri::parse(&value.uri)?, kind: value.kind, title: value.title, virtual_node: value.virtual_node,
-        })).collect()
+        let values: Vec<WireNode> =
+            serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
+        values
+            .into_iter()
+            .map(|value| {
+                Ok(KnowledgeNode {
+                    uri: KnowledgeUri::parse(&value.uri)?,
+                    kind: value.kind,
+                    title: value.title,
+                    virtual_node: value.virtual_node,
+                })
+            })
+            .collect()
     }
     /// Decode query result with canonical URI strings.
     pub fn into_query_result(self) -> LibraryResult<LibraryQueryResult> {
-        let value: WireQueryResult = serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
-        let hits = value.hits.into_iter().map(|hit| Ok(LibraryQueryHit {
-            uri: KnowledgeUri::parse(&hit.uri)?, title: hit.title, snippet: hit.snippet, score: hit.score, metadata: hit.metadata,
-        })).collect::<LibraryResult<Vec<_>>>()?;
-        Ok(LibraryQueryResult { answer: value.answer, hits, provider: value.provider, strategy: value.strategy, provenance: value.provenance })
+        let value: WireQueryResult =
+            serde_json::from_value(self.success_data()?).map_err(protocol_error)?;
+        let hits = value
+            .hits
+            .into_iter()
+            .map(|hit| {
+                Ok(LibraryQueryHit {
+                    uri: KnowledgeUri::parse(&hit.uri)?,
+                    title: hit.title,
+                    snippet: hit.snippet,
+                    score: hit.score,
+                    metadata: hit.metadata,
+                })
+            })
+            .collect::<LibraryResult<Vec<_>>>()?;
+        Ok(LibraryQueryResult {
+            answer: value.answer,
+            hits,
+            provider: value.provider,
+            strategy: value.strategy,
+            provenance: value.provenance,
+        })
     }
     fn success_data(self) -> LibraryResult<Value> {
         if !self.ok {
-            let error = self.error.unwrap_or(ProviderProtocolError { code: "provider-error".into(), message: "external provider failed without a diagnostic".into() });
-            return Err(LibraryError::Provider(format!("{}: {}", error.code, error.message)));
+            let error = self.error.unwrap_or(ProviderProtocolError {
+                code: "provider-error".into(),
+                message: "external provider failed without a diagnostic".into(),
+            });
+            return Err(LibraryError::Provider(format!(
+                "{}: {}",
+                error.code, error.message
+            )));
         }
         Ok(self.data.unwrap_or(Value::Null))
     }
 }
 
 #[derive(Deserialize)]
-struct WireCatalog { library: String, entries: Vec<WireCatalogEntry> }
+struct WireCatalog {
+    library: String,
+    entries: Vec<WireCatalogEntry>,
+}
 #[derive(Deserialize)]
-struct WireCatalogEntry { id: String, title: String, #[serde(default)] description: Option<String>, uri: String, #[serde(default)] terms: BTreeSet<String> }
+struct WireCatalogEntry {
+    id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    uri: String,
+    #[serde(default)]
+    terms: BTreeSet<String>,
+}
 #[derive(Deserialize)]
-struct WireNode { uri: String, kind: KnowledgeNodeKind, #[serde(default)] title: Option<String>, #[serde(default)] virtual_node: bool }
+struct WireNode {
+    uri: String,
+    kind: KnowledgeNodeKind,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    virtual_node: bool,
+}
 #[derive(Deserialize)]
-struct WireQueryResult { #[serde(default)] answer: Option<String>, #[serde(default)] hits: Vec<WireQueryHit>, provider: String, strategy: QueryStrategy, #[serde(default)] provenance: BTreeMap<String, String> }
+struct WireQueryResult {
+    #[serde(default)]
+    answer: Option<String>,
+    #[serde(default)]
+    hits: Vec<WireQueryHit>,
+    provider: String,
+    strategy: QueryStrategy,
+    #[serde(default)]
+    provenance: BTreeMap<String, String>,
+}
 #[derive(Deserialize)]
-struct WireQueryHit { uri: String, #[serde(default)] title: Option<String>, #[serde(default)] snippet: Option<String>, #[serde(default)] score: Option<f64>, #[serde(default)] metadata: BTreeMap<String, String> }
+struct WireQueryHit {
+    uri: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    snippet: Option<String>,
+    #[serde(default)]
+    score: Option<f64>,
+    #[serde(default)]
+    metadata: BTreeMap<String, String>,
+}
 
 /// Decode and validate request.
 pub fn decode_provider_request(bytes: &[u8]) -> LibraryResult<ProviderRequest> {
     let request: ProviderRequest = serde_json::from_slice(bytes).map_err(protocol_error)?;
     if request.protocol != PROVIDER_PROTOCOL_V1 {
-        return Err(LibraryError::Provider(format!("unsupported provider protocol '{}'", request.protocol)));
+        return Err(LibraryError::Provider(format!(
+            "unsupported provider protocol '{}'",
+            request.protocol
+        )));
     }
     Ok(request)
 }

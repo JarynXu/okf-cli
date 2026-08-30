@@ -261,7 +261,11 @@ query:
 
 #[test]
 fn git_library_materializes_and_uses_the_same_get_command() {
-    if ProcessCommand::new("git").arg("--version").output().is_err() {
+    if ProcessCommand::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         return;
     }
 
