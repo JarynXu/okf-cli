@@ -188,6 +188,7 @@ pub(crate) fn set_mounted(
         let _ = resolve_instance(entry)?;
     }
     entry.mounted = mounted;
+    let provider_authorizations = entry.approved_provider_kinds.clone();
     save_registry(registry_path, &registry)?;
 
     Outcome::success(
@@ -195,7 +196,7 @@ pub(crate) fn set_mounted(
         json!({
             "id": id,
             "mounted": mounted,
-            "provider_authorizations": entry.approved_provider_kinds,
+            "provider_authorizations": provider_authorizations,
         }),
     )
 }
