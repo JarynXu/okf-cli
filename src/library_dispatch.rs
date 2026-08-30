@@ -22,8 +22,10 @@ pub(crate) fn execute(registry_path: &Path, command: &LibraryCommand) -> Result<
         ),
         LibraryCommand::Update { id } => libraries::update_library(registry_path, id),
         LibraryCommand::Remove { id } => libraries::remove_library(registry_path, id),
-        LibraryCommand::Mount { id } => libraries::set_mounted(registry_path, id, true),
-        LibraryCommand::Unmount { id } => libraries::set_mounted(registry_path, id, false),
+        LibraryCommand::Mount { id, allow_provider } => {
+            libraries::set_mounted(registry_path, id, true, allow_provider)
+        }
+        LibraryCommand::Unmount { id } => libraries::set_mounted(registry_path, id, false, &[]),
         LibraryCommand::List => libraries::list_libraries(registry_path),
     }
 }

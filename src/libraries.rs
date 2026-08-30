@@ -3,16 +3,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use okf::{
-    BundleLibraryProvider, BundleParser, KnowledgeNode, KnowledgeUri, LibraryCapability,
-    LibraryCatalog, LibraryId, LibraryInstance, LibraryManifest, LibraryPackageManifest,
-    LibraryProvider, LibraryQuery, LibraryQueryResult, LibraryRegistry, LibraryResult,
-    LibrarySource,
+    BundleLibraryProvider, BundleParser, HttpLibraryProvider, KnowledgeUri, LibraryCapability,
+    LibraryId, LibraryInstance, LibraryManifest, LibraryPackageManifest,
+    LibraryProviderDeclaration, LibraryQuery, LibraryRegistry, LibrarySource,
+    ProcessLibraryProvider, ProviderStack,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::output::Outcome;
 
@@ -23,67 +24,13 @@ struct RegistryEntry {
     materialized: Option<PathBuf>,
     #[serde(default)]
     package: Option<LibraryPackageManifest>,
+    #[serde(default)]
+    approved_provider_kinds: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct RegistryFile {
     libraries: BTreeMap<String, RegistryEntry>,
-}
-
-#[derive(Clone, Debug)]
-struct ManifestBundleProvider {
-    inner: BundleLibraryProvider,
-    catalog: Option<LibraryCatalog>,
-}
-
-impl ManifestBundleProvider {
-    fn new(inner: BundleLibraryProvider, catalog: Option<LibraryCatalog>) -> Self {
-        Self { inner, catalog }
-    }
-}
-
-impl LibraryProvider for ManifestBundleProvider {
-    fn provider_id(&self) -> &str {
-        self.inner.provider_id()
-    }
-
-    fn capabilities(&self) -> BTreeSet<LibraryCapability> {
-        self.inner.capabilities()
-    }
-
-    fn catalog(&self, library: &LibraryId) -> LibraryResult<LibraryCatalog> {
-        if let Some(catalog) = &self.catalog {
-            if &catalog.library != library {
-                return Err(okf::LibraryError::Provider(format!(
-                    "package catalog belongs to '{}' but Library is mounted as '{}'",
-                    catalog.library, library
-                )));
-            }
-            Ok(catalog.clone())
-        } else {
-            self.inner.catalog(library)
-        }
-    }
-
-    fn list(&self, library: &LibraryId, path: &str) -> LibraryResult<Vec<KnowledgeNode>> {
-        self.inner.list(library, path)
-    }
-
-    fn read(&self, uri: &KnowledgeUri) -> LibraryResult<String> {
-        self.inner.read(uri)
-    }
-
-    fn query(
-        &self,
-        library: &LibraryId,
-        query: &LibraryQuery,
-    ) -> LibraryResult<LibraryQueryResult> {
-        self.inner.query(library, query)
-    }
-
-    fn refresh(&self) -> LibraryResult<()> {
-        self.inner.refresh()
-    }
 }
 
 pub(crate) fn add_library(
@@ -112,10 +59,13 @@ pub(crate) fn add_library(
         let path = PathBuf::from(source);
         if !path.is_dir() {
             bail!(
-                "local library source '{}' is not a directory",
+                "local Library source '{}' is not a directory",
                 path.display()
             );
         }
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("failed to resolve {}", path.display()))?;
         (LibrarySource::Local { path: path.clone() }, path)
     };
 
@@ -145,10 +95,9 @@ pub(crate) fn add_library(
     if let Some(name) = name {
         manifest.name = name.to_owned();
     }
-
     if registry.libraries.contains_key(manifest.id.as_str()) {
         cleanup_failed_git_install(&library_source, &materialized)?;
-        bail!("library '{}' is already installed", manifest.id);
+        bail!("Library '{}' is already installed", manifest.id);
     }
 
     let library_id = manifest.id.clone();
@@ -159,13 +108,18 @@ pub(crate) fn add_library(
             mounted: false,
             materialized: Some(materialized),
             package,
+            approved_provider_kinds: BTreeSet::new(),
         },
     );
     save_registry(registry_path, &registry)?;
 
     Outcome::success(
-        format!("installed {}", library_id),
-        json!({"library": manifest, "mounted": false}),
+        format!("installed {library_id}"),
+        json!({
+            "library": manifest,
+            "mounted": false,
+            "provider_authorizations": [],
+        }),
     )
 }
 
@@ -174,7 +128,7 @@ pub(crate) fn remove_library(registry_path: &Path, id: &str) -> Result<Outcome> 
     let entry = registry
         .libraries
         .remove(id)
-        .ok_or_else(|| anyhow!("library '{id}' is not installed"))?;
+        .ok_or_else(|| anyhow!("Library '{id}' is not installed"))?;
 
     if matches!(entry.manifest.source, Some(LibrarySource::Git { .. })) {
         if let Some(path) = &entry.materialized {
@@ -193,44 +147,9 @@ pub(crate) fn update_library(registry_path: &Path, id: &str) -> Result<Outcome> 
     let entry = registry
         .libraries
         .get_mut(id)
-        .ok_or_else(|| anyhow!("library '{id}' is not installed"))?;
+        .ok_or_else(|| anyhow!("Library '{id}' is not installed"))?;
 
-    let path = match &entry.manifest.source {
-        Some(LibrarySource::Git {
-            repository,
-            reference,
-        }) => {
-            let path = entry
-                .materialized
-                .as_ref()
-                .ok_or_else(|| anyhow!("git library '{id}' has no materialized path"))?;
-            if path.exists() {
-                run_git(path, &["fetch", "--all", "--tags"])?;
-                let target = reference.as_deref().unwrap_or("HEAD");
-                run_git(path, &["checkout", target])?;
-                if reference.is_none() {
-                    let _ = run_git(path, &["pull", "--ff-only"]);
-                }
-            } else {
-                materialize_git(repository, reference.as_deref(), path)?;
-            }
-            path.clone()
-        }
-        Some(LibrarySource::Local { path }) => {
-            if !path.is_dir() {
-                bail!(
-                    "local library source '{}' is no longer available",
-                    path.display()
-                );
-            }
-            path.clone()
-        }
-        Some(LibrarySource::Custom { .. }) => {
-            bail!("custom source update requires a source adapter")
-        }
-        None => bail!("library '{id}' does not declare a source"),
-    };
-
+    let path = refresh_materialized_source(entry, id)?;
     let package = load_optional_package(&path)?;
     if let Some(package) = &package {
         if package.id != id {
@@ -245,29 +164,40 @@ pub(crate) fn update_library(registry_path: &Path, id: &str) -> Result<Outcome> 
     }
     entry.package = package;
 
-    // If currently mounted, validate content and package before committing registry state.
     if entry.mounted {
         let _ = resolve_instance(entry)?;
     }
-
     save_registry(registry_path, &registry)?;
     Outcome::success(format!("updated {id}"), json!({"id": id}))
 }
 
-pub(crate) fn set_mounted(registry_path: &Path, id: &str, mounted: bool) -> Result<Outcome> {
+pub(crate) fn set_mounted(
+    registry_path: &Path,
+    id: &str,
+    mounted: bool,
+    allow_provider: &[String],
+) -> Result<Outcome> {
     let mut registry = load_registry(registry_path)?;
     let entry = registry
         .libraries
         .get_mut(id)
-        .ok_or_else(|| anyhow!("library '{id}' is not installed"))?;
+        .ok_or_else(|| anyhow!("Library '{id}' is not installed"))?;
+
     if mounted {
+        authorize_provider_kinds(entry, allow_provider)?;
         let _ = resolve_instance(entry)?;
     }
     entry.mounted = mounted;
+    let provider_authorizations = entry.approved_provider_kinds.clone();
     save_registry(registry_path, &registry)?;
+
     Outcome::success(
         format!("{} {id}", if mounted { "mounted" } else { "unmounted" }),
-        json!({"id": id, "mounted": mounted}),
+        json!({
+            "id": id,
+            "mounted": mounted,
+            "provider_authorizations": provider_authorizations,
+        }),
     )
 }
 
@@ -282,6 +212,8 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
                 "mounted": entry.mounted,
                 "materialized": entry.materialized,
                 "query": entry.package.as_ref().map(|package| &package.query),
+                "declared_providers": entry.package.as_ref().map(|package| &package.providers),
+                "provider_authorizations": entry.approved_provider_kinds,
             })
         })
         .collect::<Vec<_>>();
@@ -292,8 +224,18 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
             .libraries
             .iter()
             .map(|(id, entry)| {
+                let approvals = if entry.approved_provider_kinds.is_empty() {
+                    "-".to_owned()
+                } else {
+                    entry
+                        .approved_provider_kinds
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
                 format!(
-                    "{}\t{}\t{}",
+                    "{}\t{}\t{}\tproviders={approvals}",
                     if entry.mounted {
                         "mounted"
                     } else {
@@ -309,45 +251,16 @@ pub(crate) fn list_libraries(registry_path: &Path) -> Result<Outcome> {
     Outcome::success(human, values)
 }
 
-pub(crate) fn catalog(registry_path: &Path, id: Option<&str>) -> Result<Outcome> {
-    let runtime = build_runtime(registry_path)?;
-    let catalogs = if let Some(id) = id {
-        let library_id =
-            LibraryId::parse(id.to_owned()).map_err(|error| anyhow!(error.to_string()))?;
-        vec![
-            runtime
-                .catalog(&library_id)
-                .map_err(|error| anyhow!(error.to_string()))?,
-        ]
-    } else {
-        runtime
-            .global_catalog()
-            .map_err(|error| anyhow!(error.to_string()))?
-    };
-    let human = if catalogs.is_empty() {
-        "no mounted library catalogs".to_owned()
-    } else {
-        catalogs
-            .iter()
-            .flat_map(|catalog| {
-                catalog
-                    .entries
-                    .iter()
-                    .map(move |entry| format!("{}\t{}\t{}", catalog.library, entry.id, entry.title))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    Outcome::success(human, catalogs)
-}
-
 pub(crate) fn read(registry_path: &Path, uri: &str) -> Result<Outcome> {
     let runtime = build_runtime(registry_path)?;
     let uri = KnowledgeUri::parse(uri).map_err(|error| anyhow!(error.to_string()))?;
     let content = runtime
         .read(&uri)
         .map_err(|error| anyhow!(error.to_string()))?;
-    Outcome::success(content.clone(), json!({"uri": uri, "content": content}))
+    Outcome::success(
+        content.clone(),
+        json!({"uri": uri.to_string(), "content": content}),
+    )
 }
 
 pub(crate) fn query(
@@ -376,11 +289,13 @@ pub(crate) fn query(
                     human.push(format_query_hits(&id, &result.hits));
                     json_results.push(json!({"library": id, "result": result}));
                 }
-                Err(error) => json_results.push(json!({"library": id, "error": error.to_string()})),
+                Err(error) => {
+                    json_results.push(json!({"library": id, "error": error.to_string()}));
+                }
             }
         }
         Outcome::success(
-            if human.is_empty() {
+            if human.iter().all(String::is_empty) {
                 "no matching knowledge".to_owned()
             } else {
                 human
@@ -396,7 +311,7 @@ pub(crate) fn query(
 
 fn format_query_hits(id: &LibraryId, hits: &[okf::LibraryQueryHit]) -> String {
     if hits.is_empty() {
-        return format!("{id}: no matching knowledge");
+        return String::new();
     }
     hits.iter()
         .map(|hit| {
@@ -432,25 +347,278 @@ fn build_runtime(registry_path: &Path) -> Result<LibraryRegistry> {
 }
 
 fn resolve_instance(entry: &RegistryEntry) -> Result<LibraryInstance> {
-    let path = materialized_path(entry)?;
-    let bundle = BundleParser::default().parse_dir(path).with_context(|| {
+    let root = materialized_path(entry)?;
+    let mut stack = ProviderStack::new(format!("library:{}", entry.manifest.id));
+
+    if let Some(package) = &entry.package {
+        for declaration in &package.providers {
+            if !entry.approved_provider_kinds.contains(&declaration.kind) {
+                continue;
+            }
+            stack.push(resolve_provider(declaration, &entry.manifest.id, root)?);
+        }
+    }
+
+    // A materialized OKF bundle is the compatibility fallback and always remains available after
+    // provider-specific adapters. Invalid Markdown is never silently ignored.
+    let bundle = BundleParser::default().parse_dir(root).with_context(|| {
         format!(
             "failed to load Library '{}' from {}",
             entry.manifest.id,
-            path.display()
+            root.display()
         )
     })?;
-    let catalog = entry
-        .package
-        .as_ref()
-        .map(LibraryPackageManifest::runtime_catalog)
-        .transpose()
-        .map_err(|error| anyhow!(error.to_string()))?;
-    let provider = ManifestBundleProvider::new(BundleLibraryProvider::new(bundle), catalog);
+    let mut bundle_provider = BundleLibraryProvider::new(bundle);
+    if let Some(package) = &entry.package {
+        if !package.catalog.is_empty() {
+            bundle_provider = bundle_provider.with_catalog(
+                package
+                    .runtime_catalog()
+                    .map_err(|error| anyhow!(error.to_string()))?,
+            );
+        }
+    }
+    stack.push(Arc::new(bundle_provider));
+
     Ok(LibraryInstance::new(
         entry.manifest.clone(),
-        Arc::new(provider),
+        Arc::new(stack),
     ))
+}
+
+fn resolve_provider(
+    declaration: &LibraryProviderDeclaration,
+    library: &LibraryId,
+    root: &Path,
+) -> Result<Arc<dyn okf::LibraryProvider>> {
+    let capabilities = declaration
+        .capabilities
+        .iter()
+        .map(|value| parse_capability(value))
+        .collect::<Result<Vec<_>>>()?;
+
+    match declaration.kind.as_str() {
+        "process" => {
+            let command = required_config_string(declaration, "command")?;
+            let command = resolve_process_command(root, &command);
+            let args = config_string_array(declaration, "args")?
+                .into_iter()
+                .map(|value| substitute_config(&value, root, library))
+                .collect::<Vec<_>>();
+            let cwd = optional_config_string(declaration, "cwd")?
+                .map(|value| resolve_root_path(root, &substitute_config(&value, root, library)))
+                .unwrap_or_else(|| root.to_path_buf());
+            let mut provider = ProcessLibraryProvider::new(
+                declaration.id.clone(),
+                library.clone(),
+                command,
+                capabilities,
+            )
+            .args(args)
+            .cwd(cwd);
+            if let Some(timeout_ms) = optional_config_u64(declaration, "timeout_ms")? {
+                provider = provider.timeout(Duration::from_millis(timeout_ms.clamp(1, 300_000)));
+            }
+            let inherited = config_string_array(declaration, "inherit_env")?;
+            if !inherited.is_empty() {
+                provider = provider.inherit_environment(inherited);
+            }
+            Ok(Arc::new(provider))
+        }
+        "http" => {
+            let base_url = required_config_string(declaration, "base_url")?;
+            let mut provider = HttpLibraryProvider::new(
+                declaration.id.clone(),
+                library.clone(),
+                base_url,
+                capabilities,
+            )
+            .map_err(|error| anyhow!(error.to_string()))?;
+            if let Some(token_env) = optional_config_string(declaration, "token_env")? {
+                let token = std::env::var(&token_env).with_context(|| {
+                    format!(
+                        "HTTP provider '{}' requires environment variable '{}'",
+                        declaration.id, token_env
+                    )
+                })?;
+                provider = provider.bearer_token(token);
+            }
+            Ok(Arc::new(provider))
+        }
+        other => bail!(
+            "provider '{}' uses authorized kind '{}' but this CLI has no direct deployment adapter for it; expose it through an okf-provider/1 process or HTTP bridge, or use the SDK adapter directly",
+            declaration.id,
+            other
+        ),
+    }
+}
+
+fn authorize_provider_kinds(entry: &mut RegistryEntry, allowed: &[String]) -> Result<()> {
+    let declared = entry
+        .package
+        .as_ref()
+        .map(|package| {
+            package
+                .providers
+                .iter()
+                .map(|provider| provider.kind.as_str())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+
+    for kind in allowed {
+        if !declared.contains(kind.as_str()) {
+            bail!(
+                "Library '{}' does not declare provider kind '{}'",
+                entry.manifest.id,
+                kind
+            );
+        }
+        entry.approved_provider_kinds.insert(kind.clone());
+    }
+    Ok(())
+}
+
+fn parse_capability(value: &str) -> Result<LibraryCapability> {
+    match value {
+        "list" => Ok(LibraryCapability::List),
+        "read" => Ok(LibraryCapability::Read),
+        "catalog" => Ok(LibraryCapability::Catalog),
+        "query" => Ok(LibraryCapability::Query),
+        "refresh" => Ok(LibraryCapability::Refresh),
+        "maintain" => Ok(LibraryCapability::Maintain),
+        other => bail!("unknown Library provider capability '{other}'"),
+    }
+}
+
+fn required_config_string(declaration: &LibraryProviderDeclaration, key: &str) -> Result<String> {
+    optional_config_string(declaration, key)?.ok_or_else(|| {
+        anyhow!(
+            "provider '{}' requires string config '{}'",
+            declaration.id,
+            key
+        )
+    })
+}
+
+fn optional_config_string(
+    declaration: &LibraryProviderDeclaration,
+    key: &str,
+) -> Result<Option<String>> {
+    match declaration.config.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => bail!(
+            "provider '{}' config '{}' must be a string",
+            declaration.id,
+            key
+        ),
+    }
+}
+
+fn optional_config_u64(declaration: &LibraryProviderDeclaration, key: &str) -> Result<Option<u64>> {
+    match declaration.config.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
+            anyhow!(
+                "provider '{}' config '{}' must be a non-negative integer",
+                declaration.id,
+                key
+            )
+        }),
+        Some(_) => bail!(
+            "provider '{}' config '{}' must be a non-negative integer",
+            declaration.id,
+            key
+        ),
+    }
+}
+
+fn config_string_array(declaration: &LibraryProviderDeclaration, key: &str) -> Result<Vec<String>> {
+    match declaration.config.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value.as_str().map(str::to_owned).ok_or_else(|| {
+                    anyhow!(
+                        "provider '{}' config '{}' must contain only strings",
+                        declaration.id,
+                        key
+                    )
+                })
+            })
+            .collect(),
+        Some(_) => bail!(
+            "provider '{}' config '{}' must be an array of strings",
+            declaration.id,
+            key
+        ),
+    }
+}
+
+fn substitute_config(value: &str, root: &Path, library: &LibraryId) -> String {
+    value
+        .replace("${library_root}", &root.to_string_lossy())
+        .replace("${library_id}", library.as_str())
+}
+
+fn resolve_process_command(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute()
+        || (!value.starts_with('.') && !value.contains('/') && !value.contains('\\'))
+    {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+fn resolve_root_path(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+fn refresh_materialized_source(entry: &RegistryEntry, id: &str) -> Result<PathBuf> {
+    match &entry.manifest.source {
+        Some(LibrarySource::Git {
+            repository,
+            reference,
+        }) => {
+            let path = entry
+                .materialized
+                .as_ref()
+                .ok_or_else(|| anyhow!("Git Library '{id}' has no materialized path"))?;
+            if path.exists() {
+                run_git(path, &["fetch", "--all", "--tags"])?;
+                if let Some(reference) = reference {
+                    run_git(path, &["checkout", reference])?;
+                } else {
+                    let _ = run_git(path, &["pull", "--ff-only"]);
+                }
+            } else {
+                materialize_git(repository, reference.as_deref(), path)?;
+            }
+            Ok(path.clone())
+        }
+        Some(LibrarySource::Local { path }) => {
+            if !path.is_dir() {
+                bail!(
+                    "local Library source '{}' is no longer available",
+                    path.display()
+                );
+            }
+            Ok(path.clone())
+        }
+        Some(LibrarySource::Custom { .. }) => {
+            bail!("custom source acquisition requires a registered source adapter")
+        }
+        None => bail!("Library '{id}' does not declare a source"),
+    }
 }
 
 fn materialized_path(entry: &RegistryEntry) -> Result<&Path> {
@@ -459,11 +627,11 @@ fn materialized_path(entry: &RegistryEntry) -> Result<&Path> {
         Some(LibrarySource::Git { .. }) => entry
             .materialized
             .as_deref()
-            .ok_or_else(|| anyhow!("git library '{}' is not materialized", entry.manifest.id)),
+            .ok_or_else(|| anyhow!("Git Library '{}' is not materialized", entry.manifest.id)),
         Some(LibrarySource::Custom { kind, .. }) => {
-            bail!("custom library source '{kind}' requires an adapter")
+            bail!("custom Library source '{kind}' requires a source adapter")
         }
-        None => bail!("library '{}' does not declare a source", entry.manifest.id),
+        None => bail!("Library '{}' does not declare a source", entry.manifest.id),
     }
 }
 
@@ -486,82 +654,28 @@ fn load_registry(path: &Path) -> Result<RegistryFile> {
 }
 
 fn save_registry(path: &Path, registry: &RegistryFile) -> Result<()> {
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let bytes = serde_json::to_vec_pretty(registry)?;
-    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
-}
-
-fn cache_path(registry_path: &Path, id: &LibraryId) -> PathBuf {
-    registry_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("cache")
-        .join(id.as_str())
-}
-
-fn cleanup_failed_git_install(source: &LibrarySource, path: &Path) -> Result<()> {
-    if matches!(source, LibrarySource::Git { .. }) && path.exists() {
-        fs::remove_dir_all(path)
-            .with_context(|| format!("failed to clean up {}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn materialize_git(source: &str, reference: Option<&str>, path: &Path) -> Result<()> {
-    if path.exists() {
-        bail!("git cache path '{}' already exists", path.display());
-    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let status = ProcessCommand::new("git")
-        .arg("clone")
-        .arg(source)
-        .arg(path)
-        .status()
-        .context("failed to execute git clone")?;
-    if !status.success() {
-        bail!("git clone failed for '{source}'");
+    let mut bytes = serde_json::to_vec_pretty(registry)?;
+    bytes.push(b'\n');
+    let temp = path.with_extension("tmp");
+    fs::write(&temp, bytes).with_context(|| format!("failed to write {}", temp.display()))?;
+    if path.exists() {
+        fs::remove_file(path).with_context(|| format!("failed to replace {}", path.display()))?;
     }
-    if let Some(reference) = reference {
-        run_git(path, &["checkout", reference])?;
-    }
-    Ok(())
-}
-
-fn run_git(path: &Path, args: &[&str]) -> Result<()> {
-    let status = ProcessCommand::new("git")
-        .current_dir(path)
-        .args(args)
-        .status()
-        .with_context(|| format!("failed to execute git {}", args.join(" ")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("git {} failed in {}", args.join(" "), path.display())
-    }
-}
-
-fn is_git_source(source: &str) -> bool {
-    source.starts_with("git@")
-        || source.starts_with("ssh://")
-        || source.starts_with("http://")
-        || source.starts_with("https://")
-        || source.starts_with("file://")
-        || source.ends_with(".git")
+    fs::rename(&temp, path).with_context(|| format!("failed to commit {}", path.display()))
 }
 
 fn infer_id(source: &str) -> String {
     let trimmed = source.trim_end_matches('/').trim_end_matches(".git");
-    let raw = trimmed.rsplit(['/', ':']).next().unwrap_or("library");
-    let normalized = raw
+    let name = trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("library");
+    let normalized = name
         .chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
@@ -575,5 +689,97 @@ fn infer_id(source: &str) -> String {
         "library".to_owned()
     } else {
         normalized
+    }
+}
+
+fn is_git_source(source: &str) -> bool {
+    source.starts_with("git@")
+        || source.starts_with("ssh://")
+        || source.starts_with("git://")
+        || source.ends_with(".git")
+        || (source.starts_with("http://") || source.starts_with("https://"))
+            && source.contains("git")
+}
+
+fn cache_path(registry_path: &Path, id: &LibraryId) -> PathBuf {
+    registry_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("cache")
+        .join(id.as_str())
+}
+
+fn materialize_git(source: &str, reference: Option<&str>, path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("failed to reset Git cache {}", path.display()))?;
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let status = ProcessCommand::new("git")
+        .args(["clone", "--", source])
+        .arg(path)
+        .status()
+        .context("failed to execute git clone")?;
+    if !status.success() {
+        bail!("git clone failed with {status}");
+    }
+    if let Some(reference) = reference {
+        run_git(path, &["checkout", reference])?;
+    }
+    Ok(())
+}
+
+fn run_git(path: &Path, args: &[&str]) -> Result<()> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to execute git {}", args.join(" ")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+}
+
+fn cleanup_failed_git_install(source: &LibrarySource, materialized: &Path) -> Result<()> {
+    if matches!(source, LibrarySource::Git { .. }) && materialized.exists() {
+        fs::remove_dir_all(materialized)
+            .with_context(|| format!("failed to clean Git cache {}", materialized.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_process_commands_resolve_through_path() {
+        let root = Path::new("/tmp/library");
+        assert_eq!(
+            resolve_process_command(root, "project-context"),
+            PathBuf::from("project-context")
+        );
+        assert_eq!(
+            resolve_process_command(root, "./bin/provider"),
+            root.join("./bin/provider")
+        );
+    }
+
+    #[test]
+    fn substitutions_are_runtime_local() {
+        let root = Path::new("/tmp/library");
+        let id = LibraryId::parse("demo").expect("id");
+        let value = substitute_config("${library_root}:${library_id}", root, &id);
+        assert!(value.ends_with(":demo"));
+        assert!(value.starts_with(&root.to_string_lossy().to_string()));
     }
 }

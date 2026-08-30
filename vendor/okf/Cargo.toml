@@ -1,10 +1,16 @@
 [package]
 name = "okf"
-version = "0.1.0-alpha.1"
+version = "0.2.0-alpha.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Vendored build snapshot of the OKF SDK"
 license = "Apache-2.0"
+
+[features]
+default = []
+http-provider = ["dep:reqwest"]
+sqlite-provider = ["dep:rusqlite"]
+s3-provider = ["dep:rust-s3"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -12,6 +18,9 @@ serde_json = "1.0"
 thiserror = "2.0"
 walkdir = "2.5"
 yaml_serde = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+rusqlite = { version = "0.40", optional = true }
+rust-s3 = { version = "0.37.2", default-features = false, features = ["sync-rustls-tls", "fail-on-err"], optional = true }
 
 [lints.rust]
 missing_docs = "warn"
